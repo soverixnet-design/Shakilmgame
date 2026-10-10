@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { collection, limit, onSnapshot, orderBy, query } from 'firebase/firestore';
+import { collection, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { db } from '../../firebase';
 export const GameRankingModal = ({ gameTitle, onClose }: { gameTitle: string; onClose: () => void }) => {
  const [rows,setRows] = useState<any[]>([]);
  const [status,setStatus] = useState('লোড হচ্ছে…');
- useEffect(() => onSnapshot(query(collection(db,'gameRankings'),orderBy('todayWon','desc'),limit(50)), snap=>{
+ useEffect(() => onSnapshot(query(collection(db,'gameRankings'),where('day','==',new Date().toISOString().slice(0,10)),orderBy('todayWon','desc'),limit(50)), snap=>{
   const day = new Date().toISOString().slice(0,10);
   setRows(snap.docs.map(d=>({id:d.id,...d.data()})).filter((d:any)=>d.day===day)); setStatus('আজকের যাচাইকৃত ফলাফল এখনও নেই।');
  },()=>setStatus('র‍্যাঙ্কিং লোড করা যায়নি।')),[]);

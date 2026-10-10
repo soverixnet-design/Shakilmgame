@@ -2,7 +2,8 @@
   "firestore": [
     {
       "database": "ai-studio-voxplaysocialhub-25b972ec-15e3-44fc-aa16-09158b2d9f15",
-      "rules": "firestore.rules"
+      "rules": "firestore.rules",
+      "indexes": "firestore.indexes.json"
     }
   ],
   "functions": {
