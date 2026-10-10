@@ -47,7 +47,7 @@ const DEFAULT_SETTINGS: AppSettingsState = {
     name: 'Shakil Voice Room',
     tagline: 'VOICE & GAMES HUB',
     logo: 'S',
-    announcement: '🎉 অভিনন্দন Shakil Pro! নাইট ফুড হুইল-এ 🪙 450,000 জিতেছেন! 🥩',
+    announcement: 'ভয়েস রুম ও ডেমো গেমসে স্বাগতম!',
   },
   games: [
     {
@@ -172,6 +172,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       await setDoc(doc(db, 'settings', 'appConfig'), next, { merge: true });
     } catch (err) {
       console.warn('Saving settings to Firestore:', err);
+      throw err;
     }
   };
 

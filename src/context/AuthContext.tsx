@@ -1,11 +1,13 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut as fbSignOut, User } from 'firebase/auth';
-import { doc, getDoc, setDoc, updateDoc, onSnapshot, increment } from 'firebase/firestore';
+import { callServer } from '../serverApi';
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import { onIdTokenChanged, signInWithPopup, signOut as fbSignOut, User } from 'firebase/auth';
+import { doc, getDoc, setDoc, updateDoc, onSnapshot, increment, deleteDoc, collection, query, where } from 'firebase/firestore';
 import { auth, db, googleProvider, handleFirestoreError, OperationType } from '../firebase';
 import { UserProfile, GiftItem, GameRoundRecord } from '../types';
 
 interface AuthContextType {
   currentUser: User | null;
+  isAdmin: boolean;
   profile: UserProfile;
   isLoggedInWithGoogle: boolean;
   isLoading: boolean;
@@ -42,28 +44,21 @@ const INITIAL_PROFILE: UserProfile = {
   displayName: 'Shakil Player',
   avatarUrl: '😎',
   bio: 'ভয়েস রুমে আড্ডা ও গেমস ভালোবাসি! 🎮🎤',
-  coins: 1000000, // 10 Lakh starting demo coins as in the templates
+  coins: 0, // 10 Lakh starting demo coins as in the templates
   totalWon: 0,
   todayWon: 0,
-  level: 12,
-  followersCount: 24,
-  followingCount: 15,
-  receivedGifts: { g1: 15, g2: 8, g5: 3, g8: 1 },
+  level: 1,
+  followersCount: 0,
+  followingCount: 0,
+  receivedGifts: {},
 };
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<UserProfile>(() => {
-    try {
-      const saved = localStorage.getItem('shakil_voice_user');
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // fallback
-    }
-    return INITIAL_PROFILE;
-  });
+  const [profile, setProfile] = useState<UserProfile>(INITIAL_PROFILE);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [followingSet, setFollowingSet] = useState<Set<string>>(() => {
     try {
@@ -72,7 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // fallback
     }
-    return new Set(['user_nusrat', 'user_shakil_pro', 'user_riya']);
+    return new Set<string>();
   });
 
   // Sync profile to localStorage for persistence across reloads & offline
@@ -88,66 +83,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {}
   }, [followingSet]);
 
-  // Listen to Firebase Auth state
+  // Dispose listeners on account changes; never carry a previous account's wallet.
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setCurrentUser(user);
-      if (user) {
-        // Load or create Firestore user profile
-        try {
-          const userRef = doc(db, 'users', user.uid);
-          const snap = await getDoc(userRef);
-          if (snap.exists()) {
-            const data = snap.data() as UserProfile;
-            setProfile(prev => ({
-              ...prev,
-              ...data,
-              uid: user.uid,
-              displayName: data.displayName || user.displayName || prev.displayName,
-              avatarUrl: data.avatarUrl || user.photoURL || prev.avatarUrl,
-            }));
-          } else {
-            // Create initial user in Firestore
-            const newProf: UserProfile = {
-              uid: user.uid,
-              displayName: user.displayName || profile.displayName || 'User_' + user.uid.substring(0, 5),
-              avatarUrl: user.photoURL || profile.avatarUrl || '😎',
-              bio: profile.bio || 'Voice & Gaming Lover',
-              coins: Math.max(profile.coins, 1000000),
-              totalWon: profile.totalWon || 0,
-              todayWon: profile.todayWon || 0,
-              level: 1,
-              followersCount: 0,
-              followingCount: 0,
-              receivedGifts: profile.receivedGifts || {},
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            };
-            await setDoc(userRef, newProf);
-            setProfile(newProf);
-          }
-
-          // Setup real-time listener for this user
-          const unsubDoc = onSnapshot(userRef, (docSnap) => {
-            if (docSnap.exists()) {
-              setProfile(p => ({ ...p, ...(docSnap.data() as UserProfile) }));
-            }
-          }, (err) => {
-            console.warn('User sync onSnapshot:', err);
-          });
-
-          setIsLoading(false);
-          return () => unsubDoc();
-        } catch (err) {
-          console.error('Error fetching Firestore user profile:', err);
-          setIsLoading(false);
-        }
-      } else {
-        setIsLoading(false);
-      }
+    let generation = 0;
+    let stopProfile = () => {};
+    let stopFollows = () => {};
+    const stopAuth = onIdTokenChanged(auth, async user => {
+      const token = ++generation;
+      stopProfile(); stopFollows();
+      setCurrentUser(user); setIsAdmin(false); setFollowingSet(new Set());
+      setProfile({ ...INITIAL_PROFILE, uid: user?.uid || INITIAL_PROFILE.uid });
+      if (!user) { setIsLoading(false); return; }
+      setIsLoading(true);
+      try {
+        const result = await user.getIdTokenResult();
+        if (token !== generation) return;
+        setIsAdmin(result.claims.admin === true);
+        const userRef = doc(db, 'users', user.uid);
+        const snap = await getDoc(userRef);
+        if (token !== generation) return;
+        if (!snap.exists()) await setDoc(userRef, {
+          ...INITIAL_PROFILE, uid: user.uid, displayName: user.displayName || 'Player',
+          avatarUrl: user.photoURL || '😎', coins: 0, createdAt: new Date().toISOString()
+        });
+        if (token !== generation) return;
+        stopProfile = onSnapshot(userRef, d => {
+          if (d.exists() && token === generation) setProfile({ ...INITIAL_PROFILE, ...d.data(), todayWon: d.data().winDay === new Date().toISOString().slice(0,10) ? d.data().todayWon || 0 : 0, uid: user.uid } as UserProfile);
+        });
+        stopFollows = onSnapshot(query(collection(db, 'follows'), where('followerId', '==', user.uid)), snap => {
+          if (token === generation) setFollowingSet(new Set(snap.docs.map(d => d.data().followingId)));
+        });
+      } catch (err) { console.error('Account sync failed', err); }
+      finally { if (token === generation) setIsLoading(false); }
     });
-
-    return () => unsubscribe();
+    return () => { generation++; stopAuth(); stopProfile(); stopFollows(); };
   }, []);
 
   const loginWithGoogle = async () => {
@@ -196,122 +165,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Adjust coins (works for both bet spend, game win, gift send, and topup)
-  const adjustCoins = async (amount: number, wonAmount: number = 0) => {
-    setProfile(prev => {
-      const nextCoins = Math.max(0, prev.coins + amount);
-      const nextTodayWon = wonAmount > 0 ? prev.todayWon + wonAmount : prev.todayWon;
-      const nextTotalWon = wonAmount > 0 ? prev.totalWon + wonAmount : prev.totalWon;
-      const nextLevel = Math.max(prev.level, Math.floor(nextTotalWon / 500000) + 1);
-
-      const newP: UserProfile = {
-        ...prev,
-        coins: nextCoins,
-        todayWon: nextTodayWon,
-        totalWon: nextTotalWon,
-        level: nextLevel,
-        updatedAt: new Date().toISOString(),
-      };
-
-      if (currentUser) {
-        updateDoc(doc(db, 'users', currentUser.uid), {
-          coins: nextCoins,
-          todayWon: nextTodayWon,
-          totalWon: nextTotalWon,
-          level: nextLevel,
-          updatedAt: newP.updatedAt,
-        }).catch(err => {
-          console.warn('Syncing coins to Firestore:', err);
-        });
-      }
-
-      return newP;
-    });
+  // Legacy React game widgets cannot credit the verified wallet.
+  const adjustCoins = async (_amount: number, _wonAmount = 0) => {
+    throw new Error('ওয়ালেট পরিবর্তনের জন্য সার্ভার যাচাই প্রয়োজন।');
   };
-
-  const addDemoCoins = (amount: number = 1000000) => {
-    adjustCoins(amount, 0);
+  const addDemoCoins = (_amount = 1000000) => {
+    alert('ডেমো গেমের কয়েন ও যাচাইকৃত ওয়ালেট আলাদা।');
   };
-
   const sendGift = async (targetUid: string, gift: GiftItem, roomId?: string): Promise<boolean> => {
-    if (profile.coins < gift.price) {
-      return false;
-    }
-
-    // Deduct coins from sender
-    await adjustCoins(-gift.price);
-
-    // Save to local cache for instant UI reflection
+    if (!currentUser) { alert('গিফট পাঠাতে লগইন করুন।'); return false; }
     try {
-      const cacheKey = `received_gifts_${targetUid}`;
-      const saved = JSON.parse(localStorage.getItem(cacheKey) || '{}');
-      saved[gift.id] = (saved[gift.id] || 0) + 1;
-      localStorage.setItem(cacheKey, JSON.stringify(saved));
-      window.dispatchEvent(new CustomEvent('gift_received', { detail: { targetUid, gift } }));
-    } catch {}
-
-    // Update target user's received gifts in Firestore
-    if (targetUid && targetUid !== profile.uid) {
-      try {
-        const targetRef = doc(db, 'users', targetUid);
-        await setDoc(
-          targetRef,
-          {
-            receivedGifts: {
-              [gift.id]: increment(1),
-            },
-            coins: increment(Math.floor(gift.price * 0.7)), // 70% direct value to recipient's profile!
-            updatedAt: new Date().toISOString(),
-          },
-          { merge: true }
-        );
-      } catch (err) {
-        console.warn('Firestore gift sync notice:', err);
-      }
-    } else if (targetUid === profile.uid) {
-      // Self gift test
-      setProfile((prev) => ({
-        ...prev,
-        receivedGifts: {
-          ...prev.receivedGifts,
-          [gift.id]: ((prev.receivedGifts && prev.receivedGifts[gift.id]) || 0) + 1,
-        },
-      }));
-    }
-
-    return true;
+      await callServer('sendGift', { targetUid, giftId: gift.id, roomId: roomId || null, requestId: crypto.randomUUID() });
+      return true;
+    } catch { alert('গিফট পাঠানো যায়নি। ব্যালেন্স ও সার্ভার সংযোগ চেক করুন।'); return false; }
   };
 
   const toggleFollow = async (targetUid: string): Promise<boolean> => {
+    if(!currentUser || targetUid === currentUser.uid) return false;
     const isCurrentlyFollowing = followingSet.has(targetUid);
-    const nextSet = new Set(followingSet);
-
-    if (isCurrentlyFollowing) {
-      nextSet.delete(targetUid);
-      setFollowingSet(nextSet);
-      setProfile(prev => ({ ...prev, followingCount: Math.max(0, prev.followingCount - 1) }));
-    } else {
-      nextSet.add(targetUid);
-      setFollowingSet(nextSet);
-      setProfile(prev => ({ ...prev, followingCount: prev.followingCount + 1 }));
-    }
-
-    if (currentUser) {
-      const followDocId = `${currentUser.uid}_${targetUid}`;
-      try {
-        if (!isCurrentlyFollowing) {
-          await setDoc(doc(db, 'follows', followDocId), {
-            followerId: currentUser.uid,
-            followingId: targetUid,
-            createdAt: new Date().toISOString(),
-          });
-        }
-      } catch (err) {
-        console.warn('Firestore follow record error:', err);
-      }
-    }
-
-    return !isCurrentlyFollowing;
+    const ref = doc(db, 'follows', `${currentUser.uid}_${targetUid}`);
+    try {
+      if(isCurrentlyFollowing) await deleteDoc(ref);
+      else await setDoc(ref,{followerId:currentUser.uid,followingId:targetUid,createdAt:new Date().toISOString()});
+      return !isCurrentlyFollowing;
+    } catch { alert('ফলো পরিবর্তন সংরক্ষণ হয়নি।'); return isCurrentlyFollowing; }
   };
 
   const saveGameRound = async (
@@ -361,6 +238,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     <AuthContext.Provider
       value={{
         currentUser,
+        isAdmin,
         profile,
         isLoggedInWithGoogle: !!currentUser,
         isLoading,

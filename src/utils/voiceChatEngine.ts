@@ -1,3 +1,6 @@
+import { callServer } from '../serverApi';
+import { addDoc, collection, deleteDoc, doc, onSnapshot, query, serverTimestamp, setDoc, where } from 'firebase/firestore';
+import { auth, db } from '../firebase';
 // WebRTC P2P Real-time Voice Chat Engine
 // True Peer-to-Peer audio mesh connecting participants in a voice room
 
@@ -19,7 +22,11 @@ export class VoiceChatEngine {
   private audioCtx: AudioContext | null = null;
   private volumeAnalyser: AnalyserNode | null = null;
   private animFrameId: number | null = null;
-  private broadcastChannel: BroadcastChannel | null = null;
+  private broadcastChannel: { postMessage: (data: any) => void; close: () => void } | null = null;
+  private cleanupSignaling: (() => void)[] = [];
+  private pendingIce = new Map<string, RTCIceCandidateInit[]>();
+  private micPending = false;
+  private lastSpeakingAt = 0;
   private peerConnections = new Map<string, RTCPeerConnection>();
   private remoteAudioElements = new Map<string, HTMLAudioElement>();
   private peerStatusMap = new Map<string, PeerAudioStatus>();
@@ -39,27 +46,68 @@ export class VoiceChatEngine {
     this.roomId = roomId;
     this.myUid = myUid;
     this.myDisplayName = myDisplayName;
-    this.initSignaling();
+    void this.initializeNetwork();
+  }
+
+  private async initializeNetwork() {
+    try {
+      const config = await callServer('getVoiceConfig', {}) as { iceServers?: RTCIceServer[] };
+      if (Array.isArray(config.iceServers)) this.rtcConfig.iceServers?.push(...config.iceServers);
+    } catch { console.warn('TURN is unavailable; using STUN. Restricted networks may not connect.'); }
+    if(!this.isDestroyed) this.initSignaling();
   }
 
   private initSignaling() {
-    try {
-      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-        this.broadcastChannel = new BroadcastChannel(`shakil_p2p_voice_${this.roomId}`);
-        this.broadcastChannel.onmessage = async (event) => {
-          await this.handleSignalingMessage(event.data);
-        };
-
-        // Announce presence in the room
-        this.broadcastChannel.postMessage({
-          type: 'p2p_join',
-          from: this.myUid,
-          name: this.myDisplayName,
-        });
+    // Guests can browse; cross-device voice requires an authenticated account.
+    if (auth.currentUser?.uid !== this.myUid) return;
+    const signals = collection(db, 'rooms', this.roomId, 'signals');
+    const presence = collection(db, 'rooms', this.roomId, 'presence');
+    const me = doc(presence, this.myUid);
+    this.broadcastChannel = {
+      postMessage: (data: any) => {
+        if (this.isDestroyed) return;
+        const targets = data.to ? [data.to] : [...this.peerConnections.keys()];
+        for (const to of targets) {
+          const payload = JSON.parse(JSON.stringify(data));
+          void addDoc(signals, { ...payload, to, from: this.myUid, createdAt: serverTimestamp() }).catch(console.warn);
+        }
+      },
+      close: () => { this.cleanupSignaling.splice(0).forEach(stop => stop()); void deleteDoc(me).catch(console.warn); }
+    };
+    const stopSignals = onSnapshot(query(signals, where('to', '==', this.myUid)), snapshot => {
+      for (const change of snapshot.docChanges()) {
+        if (change.type !== 'added') continue;
+        const data = change.doc.data();
+        if (data.createdAt && Date.now() - data.createdAt.toMillis() > 120000) { void deleteDoc(change.doc.ref).catch(console.warn); continue; }
+        void this.handleSignalingMessage(data).finally(() => deleteDoc(change.doc.ref)).catch(console.warn);
       }
-    } catch (e) {
-      console.warn('P2P Signaling init note:', e);
-    }
+    }, console.warn);
+    const stopPresence = onSnapshot(presence, snapshot => {
+      const active = new Set<string>();
+      snapshot.forEach(d => {
+        const peer = d.data();
+        if(d.id === this.myUid || (peer.updatedAt && Date.now()-peer.updatedAt.toMillis()>90000)) return;
+        active.add(d.id);
+        // One deterministic offerer prevents simultaneous-offer collisions.
+        if(this.myUid < d.id && !this.peerConnections.has(d.id)) void this.handleSignalingMessage({ type:'p2p_join', from:d.id, name:peer.name });
+      });
+      for(const uid of this.peerConnections.keys()) if(!active.has(uid)) this.removePeer(uid);
+    }, console.warn);
+    const heartbeat = () => { void setDoc(me, { name: this.myDisplayName, avatar: auth.currentUser?.photoURL || '😎', updatedAt: serverTimestamp() }).catch(console.warn); };
+    heartbeat(); const timer = setInterval(heartbeat, 30000);
+    this.cleanupSignaling.push(stopSignals, stopPresence, () => clearInterval(timer));
+  }
+
+  private removePeer(uid: string) {
+    this.peerConnections.get(uid)?.close(); this.peerConnections.delete(uid);
+    const audio = this.remoteAudioElements.get(uid); if(audio) { audio.srcObject = null; audio.remove(); }
+    this.remoteAudioElements.delete(uid); this.peerStatusMap.delete(uid); this.pendingIce.delete(uid);
+    this.onPeerSpeakingCallback?.(new Map(this.peerStatusMap));
+  }
+
+  private async flushIce(uid: string, pc: RTCPeerConnection) {
+    const queued = this.pendingIce.get(uid) || []; this.pendingIce.delete(uid);
+    for(const candidate of queued) await pc.addIceCandidate(candidate);
   }
 
   public setCallbacks(
@@ -71,9 +119,12 @@ export class VoiceChatEngine {
   }
 
   public async startMicrophone(): Promise<boolean> {
-    if (this.isDestroyed) return false;
+    if (this.isDestroyed || auth.currentUser?.uid !== this.myUid) return false;
+    if (this.micStream) { this.setMute(false); return true; }
+    if (this.micPending) return false;
+    this.micPending = true;
     try {
-      if (!navigator.mediaDevices?.getUserMedia) return false;
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone unsupported");
 
       this.micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -83,6 +134,7 @@ export class VoiceChatEngine {
         },
       });
 
+      if (this.isDestroyed) { this.micStream.getTracks().forEach(t => t.stop()); return false; }
       const AudioContextClass =
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -110,7 +162,8 @@ export class VoiceChatEngine {
           if (audioSender) {
             audioSender.replaceTrack(audioTrack);
           } else {
-            pc.addTrack(audioTrack, this.micStream!);
+            const sender = pc.getTransceivers().find(t => t.receiver.track.kind === "audio")?.sender;
+            if(sender) void sender.replaceTrack(audioTrack);
           }
         });
       }
@@ -128,7 +181,7 @@ export class VoiceChatEngine {
     } catch (err) {
       console.warn('Could not acquire microphone stream:', err);
       return false;
-    }
+    } finally { this.micPending = false; }
   }
 
   private startLocalVolumeMonitoring() {
@@ -151,7 +204,8 @@ export class VoiceChatEngine {
       }
 
       // Broadcast speaking status to other room peers
-      if (this.broadcastChannel && normalized > 12) {
+      if (this.broadcastChannel && normalized > 12 && Date.now() - this.lastSpeakingAt > 1500) {
+        this.lastSpeakingAt = Date.now();
         this.broadcastChannel.postMessage({
           type: 'p2p_speaking',
           from: this.myUid,
@@ -167,6 +221,7 @@ export class VoiceChatEngine {
   }
 
   private async createPeerConnection(peerUid: string, peerName: string): Promise<RTCPeerConnection> {
+    if (this.peerConnections.has(peerUid)) return this.peerConnections.get(peerUid)!;
     const pc = new RTCPeerConnection(this.rtcConfig);
     this.peerConnections.set(peerUid, pc);
 
@@ -188,6 +243,8 @@ export class VoiceChatEngine {
       }
     }
 
+    if (!this.micStream) pc.addTransceiver("audio", { direction: "sendrecv" });
+
     // ICE Candidate handler
     pc.onicecandidate = (event) => {
       if (event.candidate && this.broadcastChannel) {
@@ -202,18 +259,19 @@ export class VoiceChatEngine {
 
     // Handle remote audio stream from peer
     pc.ontrack = (event) => {
-      if (event.streams && event.streams[0]) {
+      if (event.track) {
+        const remoteStream = event.streams[0] || new MediaStream([event.track]);
         let audioEl = this.remoteAudioElements.get(peerUid);
         if (!audioEl) {
           audioEl = new Audio();
           audioEl.autoplay = true;
           this.remoteAudioElements.set(peerUid, audioEl);
         }
-        audioEl.srcObject = event.streams[0];
+        audioEl.srcObject = remoteStream;
         audioEl.play().catch(() => {});
 
         // Setup volume analysis on incoming audio stream
-        this.monitorRemoteStreamVolume(peerUid, event.streams[0]);
+        this.monitorRemoteStreamVolume(peerUid, remoteStream);
       }
     };
 
@@ -270,6 +328,7 @@ export class VoiceChatEngine {
   private async handleSignalingMessage(data: any) {
     if (!data || data.from === this.myUid) return;
 
+    if (data.type === 'p2p_leave') { this.removePeer(data.from); return; }
     if (data.type === 'p2p_join') {
       // A new peer joined the room: create offer
       const pc = await this.createPeerConnection(data.from, data.name || 'User');
@@ -294,6 +353,7 @@ export class VoiceChatEngine {
       }
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        await this.flushIce(data.from, pc);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         this.broadcastChannel?.postMessage({
@@ -311,6 +371,7 @@ export class VoiceChatEngine {
       if (pc) {
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        await this.flushIce(data.from, pc);
         } catch (err) {
           console.warn('Set remote description note:', err);
         }
@@ -320,7 +381,8 @@ export class VoiceChatEngine {
       const pc = this.peerConnections.get(data.from);
       if (pc) {
         try {
-          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+          if (pc.remoteDescription) await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+          else this.pendingIce.set(data.from, [...(this.pendingIce.get(data.from) || []), data.candidate]);
         } catch (err) {
           console.warn('Add ICE candidate note:', err);
         }
@@ -367,6 +429,7 @@ export class VoiceChatEngine {
 
   public setMute(muted: boolean) {
     this.isMicOn = !muted;
+    if(!muted && this.volumeAnalyser) { if(this.animFrameId) cancelAnimationFrame(this.animFrameId); this.startLocalVolumeMonitoring(); }
     if (this.micStream) {
       this.micStream.getAudioTracks().forEach((track) => {
         track.enabled = !muted;

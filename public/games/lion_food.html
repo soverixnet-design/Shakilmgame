@@ -34,9 +34,28 @@ html,body{height:100%}body{background:linear-gradient(#1aa7d4,#8fdcf0);color:#ff
 <div id="grp"><button class="g" data-g="8">🥗 সালাদ x1.2<u></u></button><button class="g" data-g="9">🍕 পিজা x4<u></u></button></div><div id="msg"></div><div id="hist"></div><div id="chips"></div>
 <div id="act"><button id="auto" class="off">▶ অটো প্লে</button><button id="snd">🔊</button></div><div id="foot">আজকের জয়: 🪙 <span id="today">0</span></div>
 <script>
+let verifiedMode=false,serverRound=null,pendingRound=null;
+function requestRound(bets){
+ if(!verifiedMode)return Promise.resolve(null);
+ if(pendingRound)return pendingRound.promise;
+ const requestId=crypto.randomUUID();let resolve,reject;
+ const promise=new Promise((r,j)=>{resolve=r;reject=j});
+ const send=()=>parent.postMessage({type:'roundRequest',requestId,bets},location.origin);
+ const timer=setInterval(send,12000);pendingRound={requestId,promise,resolve,reject,timer};send();return promise;
+}
+addEventListener('message',e=>{
+ if(e.source!==parent||e.origin!==location.origin)return;
+ const d=e.data||{};
+ if(d.type==='setUser'){verifiedMode=d.verified===true;document.getElementById('add')?.remove();}
+ if(d.type==='roundResult'&&pendingRound?.requestId===d.requestId){
+  if(d.error){const el=document.getElementById('msg')||document.getElementById('mg');if(el)el.textContent=d.error;if(d.terminal){clearInterval(pendingRound.timer);pendingRound.reject(new Error(d.error));pendingRound=null;}return;}
+  clearInterval(pendingRound.timer);const resolve=pendingRound.resolve;pendingRound=null;resolve(d.result);
+ }
+});
+
 const C={"key": "g_lion", "round": 1279, "chips": [1000, 10000, 100000, 1000000], "items": [["🍗", 45], ["🐙", 25], ["🐟", 15], ["🥩", 10], ["🍇", 5], ["🥬", 5], ["🌽", 5], ["🍓", 5]]};const $=s=>document.querySelector(s);
 const fmt=n=>n>=1e6?+(n/1e6).toFixed(2)+'M':n>=1e3?+(n/1e3).toFixed(1)+'K':n;
-let bal=0;try{const u=JSON.parse(localStorage.getItem('shakil_voice_user')||'{}');if(typeof u.coins==='number')bal=u.coins;else bal=+localStorage.getItem(C.key)||0}catch(e){bal=0}
+let bal=1000000;
 let on=true,auto=false,last=null,ac;function snd(f,d){if(!on)return;try{ac=ac||new AudioContext();const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=f;g.gain.value=.08;o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+d)}catch(e){}}
 let chip=C.chips[0],bets=Array(10).fill(0),hist=[],t=20,phase='load',today=0,busy=false;
 const w=$('#wheel');
@@ -52,20 +71,20 @@ function setAv(s){av=s;$('#av span').innerHTML=avH()}
 $('#av input').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>setAv(r.result);r.readAsDataURL(f)};
 function showWin(g){const w=$('#win');w.innerHTML=`<div class="wa">${avH()}</div><div>${nm}</div><div>🎉 জিতেছেন</div><div class="wm">🪙 ${g.toLocaleString()}</div>`;w.classList.add('show');setTimeout(()=>w.classList.remove('show'),3000)}
 function rebet(){if(!last)return;last.forEach((v,i)=>{if(v&&bal>=v){bal-=v;bets[i]=v}});ui()}
-window.addEventListener('message',e=>{
+window.addEventListener('message',e=>{if(e.origin!==location.origin||e.source!==parent)return;
   if(e.data&&e.data.type=='setBalance'){bal=+e.data.balance;ui()}
-  if(e.data&&e.data.type=='setUser'){if(e.data.name)nm=e.data.name;if(e.data.avatar)setAv(e.data.avatar)}
+  if(e.data&&e.data.type=='setUser'){if(e.data.name)nm=String(e.data.name).replace(/[<>&"']/g,'');if(e.data.avatar&&/^https:\/\//.test(e.data.avatar))setAv(encodeURI(e.data.avatar).replace(/["']/g,''))}
 });
-$('#exitBtn').onclick=()=>{try{parent.postMessage({type:'exit'},'*')}catch(e){}};
-function ui(){document.querySelectorAll('.g').forEach(b=>{const v=bets[b.dataset.g];b.querySelector('u').textContent=v?fmt(v):''});try{parent.postMessage({type:'wallet',balance:bal},'*')}catch(e){}$('#bal').textContent=bal.toLocaleString();$('#today').textContent=today.toLocaleString();$('#rnd').textContent=C.round;
+$('#exitBtn').onclick=()=>{try{parent.postMessage({type:'exit'},location.origin)}catch(e){}};
+function ui(){document.querySelectorAll('.g').forEach(b=>{const v=bets[b.dataset.g];b.querySelector('u').textContent=v?fmt(v):''});try{parent.postMessage({type:'wallet',balance:bal},location.origin)}catch(e){}$('#bal').textContent=bal.toLocaleString();$('#today').textContent=today.toLocaleString();$('#rnd').textContent=C.round;
 $('#t').textContent=phase=='bet'?t:'🎡';its.forEach((e,i)=>e.querySelector('u').textContent=bets[i]?fmt(bets[i]):'');
 $('#hist').innerHTML=hist.map(i=>`<span>${C.items[i][0]}</span>`).join('');try{localStorage.setItem(C.key,bal)}catch(e){}}
 function bet(i){if(phase!='bet'){msg('বেট বন্ধ, অপেক্ষা করুন');return}if(bal<chip){msg('কয়েন যথেষ্ট নয়');return}bal-=chip;bets[i]+=chip;snd(520,.06);ui()}
 function msg(s){const m=$('#msg');m.textContent=s;m.style.opacity=1;clearTimeout(msg.h);msg.h=setTimeout(()=>m.style.opacity=0,2200)}
 function pick(){const ws=C.items.map(x=>1/x[1]),s=ws.reduce((a,b)=>a+b);let r=Math.random()*s;for(let i=0;i<8;i++){if((r-=ws[i])<0)return i}return 7}
-function spin(){phase='spin';ui();const r=pick();let p=Math.floor(Math.random()*8),n=24+((r-p+8)%8);
+async function spin(){phase='spin';ui();try{serverRound=bets.some(x=>x)?await requestRound(bets):null;}catch(e){bal+=bets.reduce((a,b)=>a+b,0);bets=Array(10).fill(0);auto=false;phase='bet';t=20;ui();msg(e.message);return;}const r=serverRound?serverRound.results[0]:pick();let p=Math.floor(Math.random()*8),n=24+((r-p+8)%8);
 const h=setInterval(()=>{its.forEach(e=>e.classList.remove('hl'));its[p%8].classList.add('hl');if(n--<=0){clearInterval(h);end(r)}p++;snd(300,.03)},90)}
-function end(r){last=bets.slice();const g=Math.floor(bets[r]*C.items[r][1]+(C.items[r][1]==5?bets[8]*1.2:bets[9]*4));if(g>0){snd(880,.4);showWin(g)}bal+=g;today+=g;C.round++;hist.unshift(r);hist=hist.slice(0,8);
+function end(r){last=bets.slice();const g=serverRound?serverRound.win:Math.floor(bets[r]*C.items[r][1]+(C.items[r][1]==5?bets[8]*1.2:bets[9]*4));if(g>0){snd(880,.4);showWin(g)}bal=serverRound?serverRound.balance:bal+g;today+=g;serverRound=null;C.round++;hist.unshift(r);hist=hist.slice(0,8);
 msg(g?`🎉 আপনি জিতেছেন ${g.toLocaleString()}`:(bets.some(x=>x)?'এবার হারলেন 😅':'ফলাফল: '+C.items[r][0]));
 setTimeout(()=>{bets=Array(10).fill(0);its.forEach(e=>e.classList.remove('hl'));phase='bet';t=20;if(auto)rebet();ui()},2500);ui()}
 setInterval(()=>{if(phase=='bet'){t--;if(t<=5&&t>0)snd(660,.08);if(t<=0)spin();ui()}},1000);

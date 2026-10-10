@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import { callServer } from '../serverApi';
+import React, { useState, useRef } from 'react';
 import {
   X,
   ShieldCheck,
@@ -30,7 +31,7 @@ interface AdminPanelModalProps {
 const ROOT_ADMIN_EMAIL = 'soverixnet@gmail.com';
 
 export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onClose }) => {
-  const { currentUser, profile, adjustCoins } = useAuth();
+  const { currentUser, profile, isAdmin } = useAuth();
   const {
     settings,
     updateBranding,
@@ -67,53 +68,21 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onClose }) => 
 
   // Admin Permission Management
   const [newAdminUid, setNewAdminUid] = useState<string>('');
-  const [adminList, setAdminList] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('shakil_admin_uids');
-      return saved ? JSON.parse(saved) : [ROOT_ADMIN_EMAIL, profile.uid];
-    } catch {
-      return [ROOT_ADMIN_EMAIL, profile.uid];
-    }
-  });
-
-  const isSuperAdmin =
-    currentUser?.email === ROOT_ADMIN_EMAIL ||
-    adminList.includes(currentUser?.email || '') ||
-    adminList.includes(profile.uid);
-
+  const [adminList, setAdminList] = useState<string[]>([]);
+  const isSuperAdmin = isAdmin;
+  const creditRequest = useRef<{key: string; id: string} | null>(null);
   const handleSendCoins = async () => {
-    if (!targetUid.trim() || coinAmount <= 0) {
-      setTransferStatus('দয়া করে সঠিক ইউজার আইডি ও কয়েনের পরিমাণ দিন');
-      return;
-    }
-
+    if (!Number.isSafeInteger(coinAmount) || coinAmount <= 0 || !targetUid.trim()) return;
+    if(isProcessing) return;
+    const key = `${targetUid.trim()}:${coinAmount}`;
+    if(creditRequest.current?.key !== key) creditRequest.current = { key, id: crypto.randomUUID() };
     setIsProcessing(true);
-    setTransferStatus('');
-
     try {
-      if (targetUid === profile.uid || targetUid === 'me') {
-        adjustCoins(coinAmount, 0);
-      } else {
-        const userRef = doc(db, 'users', targetUid.trim());
-        await updateDoc(userRef, {
-          coins: increment(coinAmount),
-        });
-      }
-
-      sound.winFanfare();
-      setTransferStatus(`✅ সফল! ${coinAmount.toLocaleString()} কয়েন ক্রেডিট করা হয়েছে!`);
-      setTimeout(() => setTransferStatus(''), 4000);
-    } catch {
-      if (targetUid === profile.uid || targetUid === 'me') {
-        adjustCoins(coinAmount, 0);
-        sound.winFanfare();
-        setTransferStatus(`✅ সফল! ${coinAmount.toLocaleString()} কয়েন ক্রেডিট করা হয়েছে!`);
-      } else {
-        setTransferStatus('⚠️ ইউজার পাওয়া যায়নি অথবা ত্রুটি ঘটেছে।');
-      }
-    } finally {
-      setIsProcessing(false);
-    }
+      await callServer('creditCoins', { targetUid: targetUid === 'me' ? profile.uid : targetUid.trim(), amount: coinAmount, requestId: creditRequest.current.id });
+      creditRequest.current = null;
+      setTransferStatus('✅ সার্ভারে কয়েন ক্রেডিট সম্পন্ন হয়েছে।');
+    } catch { setTransferStatus('ক্রেডিট ব্যর্থ। সার্ভার ও অ্যাডমিন অনুমতি চেক করুন।'); }
+    finally { setIsProcessing(false); }
   };
 
   const handleSaveBranding = async () => {
@@ -144,20 +113,13 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onClose }) => 
     sound.winFanfare();
   };
 
-  const handleGrantAdmin = (uid: string) => {
-    if (!uid.trim()) return;
-    const next = Array.from(new Set([...adminList, uid.trim()]));
-    setAdminList(next);
-    localStorage.setItem('shakil_admin_uids', JSON.stringify(next));
-    setNewAdminUid('');
-    sound.winFanfare();
+  const handleGrantAdmin = async (uid: string) => {
+    try { await callServer('setAdmin', { uid: uid.trim(), enabled: true }); setAdminList(v => [...new Set([...v, uid.trim()])]); setNewAdminUid(''); }
+    catch { alert('অ্যাডমিন অনুমতি পরিবর্তন করা যায়নি। Firebase UID ব্যবহার করুন।'); }
   };
-
-  const handleRevokeAdmin = (uid: string) => {
-    if (uid === ROOT_ADMIN_EMAIL) return;
-    const next = adminList.filter((a) => a !== uid);
-    setAdminList(next);
-    localStorage.setItem('shakil_admin_uids', JSON.stringify(next));
+  const handleRevokeAdmin = async (uid: string) => {
+    try { await callServer('setAdmin', { uid, enabled: false }); setAdminList(v => v.filter(x => x !== uid)); }
+    catch { alert('অনুমতি পরিবর্তন ব্যর্থ।'); }
   };
 
   if (!isSuperAdmin) {

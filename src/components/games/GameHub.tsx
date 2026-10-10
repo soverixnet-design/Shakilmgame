@@ -35,7 +35,7 @@ export const GameHub: React.FC = () => {
           </div>
           <div>
             <span className="text-[11px] text-white/50 font-bold block uppercase tracking-wider">
-              গেম ও মেইন ওয়ালেট ব্যালেন্স
+              যাচাইকৃত ওয়ালেট • অতিথির জন্য ডেমো
             </span>
             <div className="flex items-baseline gap-1.5">
               <span className="text-[22px] font-black text-amber-300">
@@ -50,7 +50,7 @@ export const GameHub: React.FC = () => {
 
         <div className="text-right">
           <span className="text-[10px] text-amber-300 bg-amber-400/10 px-2 py-0.5 rounded-full font-bold border border-amber-400/20 block mb-1">
-            অফিশিয়াল ওয়ালেট
+            ওয়ালেট
           </span>
           <span className="text-[11px] text-white/50">লাইভ ব্যালেন্স</span>
         </div>
@@ -102,7 +102,7 @@ export const GameHub: React.FC = () => {
             <div className="flex items-center justify-between pt-1">
               <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                অনলাইন খেলোয়াড় সক্রিয়
+                ডেমো গেম
               </span>
 
               <button

@@ -60,8 +60,8 @@ const DEFAULT_ROOM_PARTICIPANTS = [
 
 export const VoiceRoomView: React.FC<VoiceRoomViewProps> = ({ room, onLeave }) => {
   const { profile, currentUser } = useAuth();
-  const [isMicOn, setIsMicOn] = useState<boolean>(true);
-  const [mySeatIndex, setMySeatIndex] = useState<number | null>(0);
+  const [isMicOn, setIsMicOn] = useState<boolean>(false);
+  const [mySeatIndex, setMySeatIndex] = useState<number | null>(null);
   const [realMicVolume, setRealMicVolume] = useState<number>(0);
   const [showPkBattle, setShowPkBattle] = useState<boolean>(false);
   const [activeTabFilter, setActiveTabFilter] = useState<'All' | 'Chat' | 'Gift'>('All');
@@ -87,92 +87,20 @@ export const VoiceRoomView: React.FC<VoiceRoomViewProps> = ({ room, onLeave }) =
   const isCreatedByMe = room.hostId === profile.uid;
 
   // Initialize clean seats: Host at Seat 0, others clean for real joining or sample if joined
-  const [seats, setSeats] = useState<VoiceRoomSeat[]>(() => {
-    const list: VoiceRoomSeat[] = [];
-    for (let i = 0; i < 20; i++) {
-      if (i === 0) {
-        list.push({
-          seatIndex: 0,
-          user: {
-            uid: room.hostId,
-            displayName: room.hostName,
-            avatarUrl: room.hostAvatar,
-            level: isCreatedByMe ? profile.level : 38,
-          },
-          isMuted: false,
-          isSpeaking: false,
-          isHost: true,
-        });
-      } else if (!isCreatedByMe && i < 18) {
-        // If joining an existing room, show community members
-        const preset = DEFAULT_ROOM_PARTICIPANTS[i - 1];
-        if (i === 7) {
-          // Locked empty seat (No. 8 in screenshot)
-          list.push({
-            seatIndex: i,
-            user: null,
-            isMuted: false,
-            isSpeaking: false,
-          });
-        } else {
-          list.push({
-            seatIndex: i,
-            user: {
-              uid: `user_${preset.name.replace(/[^a-zA-Z0-9]/g, '_')}_${i}`,
-              displayName: preset.name,
-              avatarUrl: preset.avatar,
-              level: preset.level,
-            },
-            isMuted: i % 4 === 0,
-            isSpeaking: i === 1 || i === 5,
-          });
-        }
-      } else {
-        // Empty clean seats for real users
-        list.push({
-          seatIndex: i,
-          user: null,
-          isMuted: false,
-          isSpeaking: false,
-        });
-      }
-    }
-    return list;
-  });
-
-  const [messages, setMessages] = useState<RoomMessage[]>([
-    {
-      id: 'm1',
-      roomId: room.id,
-      userId: 'system',
-      userName: 'System',
-      userAvatar: '📢',
-      text: `${room.title} এ স্বাগতম! গান, গল্প ও গেমসের আসরে যোগ দিন 🌸`,
-      type: 'system',
-      createdAt: '10:00',
-    },
-    {
-      id: 'm2',
-      roomId: room.id,
-      userId: 'user_priyo',
-      userName: 'MR. BLACK?',
-      userAvatar: '🤵',
-      text: 'অনুভবে তুমি ... 🌹 x 1',
-      type: 'gift',
-      giftEmoji: '🌹',
-      createdAt: '10:02',
-    },
-    {
-      id: 'm3',
-      roomId: room.id,
-      userId: 'user_joya',
-      userName: 'joya',
-      userAvatar: '👸',
-      text: 'সবাই কেমন আছেন? নতুন সদস্যরা রুমে স্বাগত! 💖',
-      type: 'chat',
-      createdAt: '10:03',
-    },
-  ]);
+  const [seats, setSeats] = useState<VoiceRoomSeat[]>(Array.from({length:20},(_,seatIndex)=>({seatIndex,user:null,isMuted:true,isSpeaking:false})));
+  const [messages, setMessages] = useState<RoomMessage[]>([]);
+  useEffect(() => {
+    if(!currentUser) return;
+    return onSnapshot(collection(db, 'rooms', room.id, 'presence'), snap => {
+      const peers = snap.docs.filter(d => !d.data().updatedAt || Date.now()-d.data().updatedAt.toMillis()<90000)
+        .sort((a,b)=>a.id===room.hostId?-1:b.id===room.hostId?1:a.id.localeCompare(b.id));
+      setSeats(Array.from({length:20},(_,seatIndex)=>{
+        const peer=peers[seatIndex], data=peer?.data();
+        return {seatIndex,user:peer?{uid:peer.id,displayName:data.name||'Player',avatarUrl:data.avatar||'😎',level:1}:null,isMuted:peer?.id===profile.uid?!isMicOn:true,isSpeaking:false,isHost:peer?.id===room.hostId};
+      }));
+      const index=peers.findIndex(d=>d.id===profile.uid);setMySeatIndex(index>=0&&index<20?index:null);
+    }, console.warn);
+  }, [room.id, currentUser?.uid, profile.uid, isMicOn]);
 
   const [chatInput, setChatInput] = useState<string>('');
   const [activeSpeakerIds, setActiveSpeakerIds] = useState<Set<string>>(new Set());
@@ -236,7 +164,7 @@ export const VoiceRoomView: React.FC<VoiceRoomViewProps> = ({ room, onLeave }) =
     if (voiceChatEngineRef.current) {
       if (isMicOn && mySeatIndex !== null) {
         voiceChatEngineRef.current.setMute(false);
-        voiceChatEngineRef.current.startMicrophone();
+        void voiceChatEngineRef.current.startMicrophone().then(ok => { if(!ok) { setIsMicOn(false); alert('মাইক চালু করা যায়নি। লগইন ও মাইক্রোফোন অনুমতি চেক করুন।'); } });
       } else {
         voiceChatEngineRef.current.setMute(true);
       }
@@ -280,6 +208,7 @@ export const VoiceRoomView: React.FC<VoiceRoomViewProps> = ({ room, onLeave }) =
   }, [messages]);
 
   const handleSendMessage = async () => {
+    if (!currentUser) { alert('মেসেজ পাঠাতে লগইন করুন।'); return; }
     if (!chatInput.trim()) return;
     const msgId = 'msg_' + Date.now();
     const newMsg: RoomMessage = {
@@ -290,17 +219,18 @@ export const VoiceRoomView: React.FC<VoiceRoomViewProps> = ({ room, onLeave }) =
       userAvatar: profile.avatarUrl,
       text: chatInput.trim(),
       type: 'chat',
-      createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      createdAt: new Date().toISOString(),
     };
 
-    setMessages((prev) => [...prev, newMsg]);
-    setChatInput('');
+
 
     if (currentUser) {
       try {
         await setDoc(doc(db, 'rooms', room.id, 'messages', msgId), newMsg);
+        setChatInput('');
       } catch (err) {
         console.warn('Firestore message write error:', err);
+        alert('মেসেজ পাঠানো যায়নি।');
       }
     }
   };
@@ -309,28 +239,9 @@ export const VoiceRoomView: React.FC<VoiceRoomViewProps> = ({ room, onLeave }) =
     const seat = seats[seatIdx];
 
     if (!seat.user) {
-      // Empty seat: Take seat or change to this seat!
-      setSeats((prev) => {
-        const next = [...prev];
-        if (mySeatIndex !== null) {
-          next[mySeatIndex] = { ...next[mySeatIndex], user: null, isSpeaking: false };
-        }
-        next[seatIdx] = {
-          ...next[seatIdx],
-          user: {
-            uid: profile.uid,
-            displayName: profile.displayName,
-            avatarUrl: profile.avatarUrl,
-            level: profile.level,
-          },
-          isMuted: !isMicOn,
-          isSpeaking: false,
-          isHost: isCreatedByMe && seatIdx === 0,
-        };
-        return next;
-      });
-      setMySeatIndex(seatIdx);
-      sound.tick();
+      if(!currentUser) { alert('ভয়েসে যোগ দিতে লগইন করুন।'); return; }
+      if(mySeatIndex === null) { alert('আপনার আসন প্রস্তুত হচ্ছে বা রুম পূর্ণ।'); return; }
+      setIsMicOn(true);
     } else if (seat.user.uid === profile.uid) {
       // Toggle microphone on own seat
       setIsMicOn((m) => !m);
@@ -501,13 +412,7 @@ export const VoiceRoomView: React.FC<VoiceRoomViewProps> = ({ room, onLeave }) =
               hasUser &&
               (isMe ? isMicOn && realMicVolume > 12 : activeSpeakerIds.has(seat.user?.uid || ''));
 
-            // Look up preset gift tag for mock participants, or user's received count
-            const preset = DEFAULT_ROOM_PARTICIPANTS[idx - 1];
-            const giftBadge = isMe
-              ? '202.2K'
-              : hasUser && preset
-              ? preset.giftValue
-              : '8.0K';
+            const giftBadge = isMe ? Object.values(profile.receivedGifts || {}).reduce((a,b)=>a+b,0).toString() : '—';
 
             return (
               <button

@@ -18,6 +18,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { collection, onSnapshot, doc, setDoc } from 'firebase/firestore';
+import { query, where } from 'firebase/firestore';
 import { db } from './firebase';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { SettingsProvider, useAppSettings } from './context/SettingsContext';
@@ -34,95 +35,12 @@ import { DailyLeaderboardHeader } from './components/DailyLeaderboardHeader';
 
 const ROOT_ADMIN_EMAIL = 'soverixnet@gmail.com';
 
-const INITIAL_ROOMS: VoiceRoom[] = [
-  {
-    id: '102938',
-    title: 'রাতের আড্ডা 🌙',
-    topic: 'Adda',
-    hostId: 'user_nusrat',
-    hostName: 'Nusrat VIP',
-    hostAvatar: '👩🏻‍🎤',
-    participantsCount: 9,
-    isPrivate: false,
-    seats: [],
-    bgGradient: 'from-violet-600 to-indigo-700',
-  },
-  {
-    id: '102939',
-    title: 'গেমিং জোন ও হুইল 🎮',
-    topic: 'Gaming',
-    hostId: 'user_shakil_pro',
-    hostName: 'Shakil Pro',
-    hostAvatar: '🧑🏻‍💻',
-    participantsCount: 8,
-    isPrivate: false,
-    seats: [],
-    bgGradient: 'from-cyan-600 to-blue-700',
-  },
-  {
-    id: '102940',
-    title: 'প্রেমের গল্প ও গান 💌',
-    topic: 'Love',
-    hostId: 'user_riya',
-    hostName: 'Riya Queen',
-    hostAvatar: '💃',
-    participantsCount: 11,
-    isPrivate: false,
-    seats: [],
-    bgGradient: 'from-pink-600 to-rose-700',
-  },
-  {
-    id: '102941',
-    title: 'গানে গানে রাত দুপুর 🎶',
-    topic: 'Music',
-    hostId: 'user_arif',
-    hostName: 'Arif Rock',
-    hostAvatar: '🎸',
-    participantsCount: 7,
-    isPrivate: false,
-    seats: [],
-    bgGradient: 'from-emerald-600 to-teal-700',
-  },
-  {
-    id: '102942',
-    title: 'হাসির আসর ও কমেডি 😂',
-    topic: 'Fun',
-    hostId: 'user_babu',
-    hostName: 'Babu Fun',
-    hostAvatar: '🤡',
-    participantsCount: 12,
-    isPrivate: false,
-    seats: [],
-    bgGradient: 'from-orange-600 to-red-700',
-  },
-  {
-    id: '102943',
-    title: 'চায়ের আড্ডা ও গল্প ☕',
-    topic: 'Chill',
-    hostId: 'user_tania',
-    hostName: 'Tania Smile',
-    hostAvatar: '🧕',
-    participantsCount: 5,
-    isPrivate: false,
-    seats: [],
-    bgGradient: 'from-amber-600 to-yellow-700',
-  },
-];
-
 function MainApp() {
-  const { profile, currentUser, isLoggedInWithGoogle, loginWithGoogle, addDemoCoins } = useAuth();
+  const { isAdmin, profile, currentUser, isLoggedInWithGoogle, loginWithGoogle, addDemoCoins } = useAuth();
   const { settings } = useAppSettings();
 
   const [activeTab, setActiveTab] = useState<'rooms' | 'games' | 'wallet' | 'profile'>('rooms');
-  const [rooms, setRooms] = useState<VoiceRoom[]>(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('shakil_my_created_rooms') || '[]');
-      if (saved.length > 0) {
-        return [...saved, ...INITIAL_ROOMS];
-      }
-    } catch {}
-    return INITIAL_ROOMS;
-  });
+  const [rooms, setRooms] = useState<VoiceRoom[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeRoom, setActiveRoom] = useState<VoiceRoom | null>(null);
@@ -138,31 +56,16 @@ function MainApp() {
   const [inspectUserModal, setInspectUserModal] = useState<any | null>(null);
 
   // Admin access check (root email or granted UIDs)
-  const isAdmin =
-    currentUser?.email === ROOT_ADMIN_EMAIL ||
-    profile.uid.includes('admin') ||
-    localStorage.getItem('shakil_admin_uids')?.includes(currentUser?.email || profile.uid);
+
 
   // Firestore Live Rooms Sync
   useEffect(() => {
     try {
-      const roomsRef = collection(db, 'rooms');
+      const roomsRef = query(collection(db, 'rooms'), where('isPrivate', '==', false));
       const unsubscribe = onSnapshot(
         roomsRef,
         (snapshot) => {
-          if (!snapshot.empty) {
-            const list: VoiceRoom[] = [];
-            snapshot.forEach((docSnap) => {
-              list.push({ id: docSnap.id, ...(docSnap.data() as any) });
-            });
-            setRooms((prev) => {
-              const map = new Map<string, VoiceRoom>();
-              INITIAL_ROOMS.forEach((r) => map.set(r.id, r));
-              prev.forEach((r) => map.set(r.id, r));
-              list.forEach((r) => map.set(r.id, r));
-              return Array.from(map.values());
-            });
-          }
+          setRooms(snapshot.docs.map(d => ({ ...d.data(), id: d.id } as VoiceRoom)));
         },
         (err) => {
           console.warn('Rooms onSnapshot:', err);
@@ -186,6 +89,8 @@ function MainApp() {
   });
 
   const handleCreateRoom = async () => {
+    if (!currentUser) { alert('রুম তৈরি করতে লগইন করুন।'); return; }
+    if (isPrivateRoom) { alert('প্রাইভেট রুমের আমন্ত্রণ ব্যবস্থা এখনও চালু হয়নি। পাবলিক রুম তৈরি করুন।'); return; }
     if (!newRoomTitle.trim()) return;
     const roomId = Math.floor(100000 + Math.random() * 900000).toString();
     const newRoom: VoiceRoom = {
@@ -202,22 +107,11 @@ function MainApp() {
       createdAt: new Date().toISOString(),
     };
 
-    const updatedRooms = [newRoom, ...rooms.filter((r) => r.id !== roomId)];
-    setRooms(updatedRooms);
-    try {
-      const myRooms = JSON.parse(localStorage.getItem('shakil_my_created_rooms') || '[]');
-      localStorage.setItem('shakil_my_created_rooms', JSON.stringify([newRoom, ...myRooms]));
-    } catch {}
-
-    setActiveRoom(newRoom);
-    setShowCreateRoom(false);
-    setNewRoomTitle('');
-
     try {
       await setDoc(doc(db, 'rooms', roomId), newRoom);
-    } catch (err) {
-      console.warn('Room created locally:', err);
-    }
+      setActiveRoom(newRoom); setShowCreateRoom(false); setNewRoomTitle('');
+    } catch { alert('রুম তৈরি হয়নি। Firebase সংযোগ ও অনুমতি চেক করুন।'); }
+
   };
 
   if (activeRoom) {
@@ -255,7 +149,7 @@ function MainApp() {
         {/* User Coins, Lucky Wheel & Admin Panel */}
         <div className="flex items-center gap-1.5">
           {/* Admin Panel Button */}
-          {(isAdmin || currentUser?.email === ROOT_ADMIN_EMAIL || profile.uid === 'guest_shakil') && (
+          {isAdmin && (
             <button
               onClick={() => setShowAdminPanel(true)}
               className="w-8 h-8 rounded-full bg-amber-500/20 text-amber-300 border border-amber-400/50 flex items-center justify-center active:scale-90 transition shadow-[0_0_10px_rgba(255,215,0,0.3)]"

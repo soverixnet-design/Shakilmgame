@@ -19,7 +19,8 @@ const PRIZES = [
 ];
 
 export const DailyLuckyWheelModal: React.FC<DailyLuckyWheelModalProps> = ({ onClose }) => {
-  const { profile, adjustCoins } = useAuth();
+  const { profile } = useAuth();
+  const adjustCoins = (_amount: number, _won?: number) => {};
   const [rotation, setRotation] = useState<number>(0);
   const [isSpinning, setIsSpinning] = useState<boolean>(false);
   const [wonPrize, setWonPrize] = useState<{ amount: number; label: string } | null>(null);
@@ -77,10 +78,10 @@ export const DailyLuckyWheelModal: React.FC<DailyLuckyWheelModalProps> = ({ onCl
             {hasFreeSpin ? '🎁 আজকের ফ্রি স্পিন' : '⭐ লাকি রিওয়ার্ড হুইল'}
           </span>
           <h3 className="text-[20px] font-black text-white leading-tight">
-            দৈনিক লাকি স্পিন হুইল 🎡
+            ডেমো লাকি স্পিন 🎡
           </h3>
           <p className="text-[11px] text-white/60">
-            ৫০,০০০ পর্যন্ত কয়েন জেতার সুযোগ প্রতিদিন!
+            শুধু ডেমো; ওয়ালেটে কয়েন যোগ হবে না।
           </p>
         </div>
 

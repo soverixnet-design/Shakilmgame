@@ -1,3 +1,4 @@
+import { callServer } from '../serverApi';
 import React, { useState } from 'react';
 import { Coins, Sparkles, TrendingUp, Check, Flame, Plus } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -14,22 +15,13 @@ export const WalletTab: React.FC = () => {
   });
   const [successMsg, setSuccessMsg] = useState<string>('');
 
-  const handleClaimDaily = () => {
+  const handleClaimDaily = async () => {
     if (dailyClaimed) return;
-    const bonus = 100000;
-    adjustCoins(bonus, 0);
-    sound.winFanfare();
-    setDailyClaimed(true);
-    localStorage.setItem('daily_claimed_date', new Date().toDateString());
-    setSuccessMsg(`🎉 দৈনিক বোনাস +${bonus.toLocaleString()} কয়েন ওয়ালেটে যোগ হয়েছে!`);
-    setTimeout(() => setSuccessMsg(''), 3000);
+    try { await callServer('claimDaily', {}); setDailyClaimed(true); setSuccessMsg('দৈনিক বোনাস সার্ভারে যোগ হয়েছে।'); }
+    catch { setSuccessMsg('বোনাস পাওয়া যায়নি। লগইন, আজকের দাবি ও সার্ভার সংযোগ চেক করুন।'); }
   };
-
-  const handleBuyPackage = (pkg: typeof coinPackages[0]) => {
-    addDemoCoins(pkg.coins);
-    sound.winFanfare();
-    setSuccessMsg(`🎉 সফল রিচার্জ! +${(pkg.coins / 1000000).toFixed(0)} মিলিয়ন কয়েন ওয়ালেটে যোগ হয়েছে!`);
-    setTimeout(() => setSuccessMsg(''), 3000);
+  const handleBuyPackage = (_pkg: typeof coinPackages[0]) => {
+    setSuccessMsg('অনলাইন পেমেন্ট এখনও চালু হয়নি। টাকা দেওয়ার আগে অনুমোদিত অ্যাডমিনের সাথে যোগাযোগ করুন।');
   };
 
   return (

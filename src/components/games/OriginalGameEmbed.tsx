@@ -1,3 +1,4 @@
+import { callServer } from '../../serverApi';
 import React, { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Coins, Sparkles, Gamepad2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
@@ -13,10 +14,16 @@ export const OriginalGameEmbed: React.FC<OriginalGameEmbedProps> = ({
   title,
   onBack,
 }) => {
-  const { profile, adjustCoins } = useAuth();
+  const { profile, currentUser } = useAuth();
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const coinsRef = useRef(profile.coins);
-  coinsRef.current = profile.coins;
+  const [demoCoins, setDemoCoins] = useState(1000000);
+  const verifiedAtMount = useRef(!!currentUser);
+  useEffect(() => { if(verifiedAtMount.current !== !!currentUser) onBack(); }, [currentUser, onBack]);
+  const coinsRef = useRef(demoCoins);
+  coinsRef.current = currentUser ? profile.coins : demoCoins;
+  const filename = gamePath.split('/').pop() || '';
+  const allowed = ['slots.html', 'jackpot_fruit.html', 'night_food.html', 'lion_food.html'];
+  const safePath = allowed.includes(filename) ? `${import.meta.env.BASE_URL}games/${filename}` : 'about:blank';
 
   // 5-second loading state as requested: "যে কোন গেমসে ঢোকার আগে ৫ সেকেন্ড লোডিং নিবে"
   const [loadingCountdown, setLoadingCountdown] = useState<number>(5);
@@ -42,15 +49,16 @@ export const OriginalGameEmbed: React.FC<OriginalGameEmbedProps> = ({
     if (iframeRef.current && iframeRef.current.contentWindow) {
       iframeRef.current.contentWindow.postMessage(
         { type: 'setBalance', balance: coinsRef.current },
-        '*'
+        window.location.origin
       );
       iframeRef.current.contentWindow.postMessage(
         {
           type: 'setUser',
+          verified: !!currentUser,
           name: profile.displayName,
           avatar: profile.avatarUrl,
         },
-        '*'
+        window.location.origin
       );
     }
   };
@@ -59,16 +67,21 @@ export const OriginalGameEmbed: React.FC<OriginalGameEmbedProps> = ({
     if (!isLoading) {
       syncWithIframe();
     }
-  }, [profile.coins, profile.displayName, profile.avatarUrl, isLoading]);
+  }, [profile.displayName, profile.avatarUrl, isLoading]);
 
   useEffect(() => {
     const handleMessage = (e: MessageEvent) => {
-      if (!e.data) return;
+      if (e.origin !== window.location.origin || e.source !== iframeRef.current?.contentWindow || !e.data) return;
 
-      if (e.data.type === 'wallet' && typeof e.data.balance === 'number') {
+      if (e.data.type === 'roundRequest' && currentUser && typeof e.data.requestId === 'string') {
+        void callServer('playRound', { game: filename.replace('.html', ''), bets: e.data.bets, requestId: e.data.requestId }).then(result => {
+          iframeRef.current?.contentWindow?.postMessage({type:'roundResult',requestId:e.data.requestId,result},window.location.origin);
+        }).catch((error: any) => { iframeRef.current?.contentWindow?.postMessage({type:'roundResult',requestId:e.data.requestId,error:'সার্ভার যাচাই ব্যর্থ। লগইন, ব্যালেন্স ও backend চেক করুন।', terminal: ['functions/invalid-argument','functions/failed-precondition','functions/unauthenticated','functions/permission-denied','functions/not-found','functions/unimplemented'].includes(error.code)},window.location.origin); });
+      }
+      if (!currentUser && e.data.type === 'wallet' && Number.isSafeInteger(e.data.balance) && e.data.balance >= 0 && e.data.balance <= 1e12) {
         const delta = e.data.balance - coinsRef.current;
         if (delta !== 0) {
-          adjustCoins(delta, delta > 0 ? delta : 0);
+          setDemoCoins(e.data.balance);
         }
       }
 
@@ -79,7 +92,7 @@ export const OriginalGameEmbed: React.FC<OriginalGameEmbedProps> = ({
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, []);
+  }, [currentUser, filename, onBack]);
 
   return (
     <div className="fixed inset-0 z-50 bg-black flex flex-col justify-between select-none">
@@ -94,16 +107,16 @@ export const OriginalGameEmbed: React.FC<OriginalGameEmbedProps> = ({
         </button>
 
         <h3 className="font-extrabold text-[14px] text-amber-300 truncate max-w-[150px]">
-          {title}
+          {title} · {currentUser ? 'ওয়ালেট' : 'ডেমো'}
         </h3>
 
         {/* Clean Wallet Coins Display (No free coins button as requested!) */}
         <div className="flex items-center gap-1.5 bg-black/50 border border-amber-400/30 px-3 py-1 rounded-full text-[12px] text-amber-300 font-extrabold">
           <Coins className="w-3.5 h-3.5" />
           <span>
-            {profile.coins >= 1000000
-              ? (profile.coins / 1000000).toFixed(2) + 'M'
-              : profile.coins.toLocaleString()}
+            {coinsRef.current >= 1000000
+              ? (coinsRef.current / 1000000).toFixed(2) + 'M'
+              : coinsRef.current.toLocaleString()}
           </span>
         </div>
       </div>
@@ -126,7 +139,7 @@ export const OriginalGameEmbed: React.FC<OriginalGameEmbedProps> = ({
                 {title}
               </h2>
               <p className="text-[12px] text-white/60 mt-1">
-                গেম সার্ভারের সাথে কয়েন সিঙ্ক হচ্ছে...
+                ডেমো গেম প্রস্তুত হচ্ছে...
               </p>
             </div>
 
@@ -146,7 +159,7 @@ export const OriginalGameEmbed: React.FC<OriginalGameEmbedProps> = ({
             </div>
 
             <p className="text-[11px] text-white/40">
-              💡 আপনি জিতে গেলে উইনিং কয়েন সরাসরি আপনার ওয়ালেটে যুক্ত হবে
+              {currentUser ? 'প্রতিটি রাউন্ড সার্ভারে যাচাই করা হবে' : 'ডেমো কয়েন • ওয়ালেটে রূপান্তরযোগ্য নয়'}
             </p>
           </div>
         </div>
@@ -154,7 +167,7 @@ export const OriginalGameEmbed: React.FC<OriginalGameEmbedProps> = ({
         /* Embedded 100% Original HTML Game in Iframe */
         <iframe
           ref={iframeRef}
-          src={gamePath}
+          src={safePath}
           onLoad={syncWithIframe}
           className="flex-1 w-full h-full border-0 bg-transparent"
           title={title}
