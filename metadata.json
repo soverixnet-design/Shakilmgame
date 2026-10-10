@@ -1,0 +1,6 @@
+{
+  "name": "Shakil Voice Room & Games",
+  "description": "ভয়েস রুম, রিয়েলটাইম আড্ডা, শামীম/শাকিল ফুড হুইল ও স্লট গেমস, গিফটিং এবং প্রোফাইল ওয়ালেট অ্যাপ",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

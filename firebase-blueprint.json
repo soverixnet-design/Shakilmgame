@@ -1,0 +1,134 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile with synchronized wallet coins, levels, gifts, and follow counts.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "displayName": { "type": "string", "maxLength": 60 },
+        "avatarUrl": { "type": "string", "maxLength": 500000 },
+        "bio": { "type": "string", "maxLength": 200 },
+        "coins": { "type": "number" },
+        "totalWon": { "type": "number" },
+        "todayWon": { "type": "number" },
+        "level": { "type": "number" },
+        "followersCount": { "type": "number" },
+        "followingCount": { "type": "number" },
+        "receivedGifts": { "type": "object" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "displayName", "coins"]
+    },
+    "Follow": {
+      "title": "Follow",
+      "description": "Follow relationship between two users.",
+      "type": "object",
+      "properties": {
+        "followerId": { "type": "string", "maxLength": 128 },
+        "followingId": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["followerId", "followingId"]
+    },
+    "VoiceRoom": {
+      "title": "VoiceRoom",
+      "description": "Active voice room with speakers, topic, and participant counter.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 100 },
+        "topic": { "type": "string", "maxLength": 50 },
+        "hostId": { "type": "string", "maxLength": 128 },
+        "hostName": { "type": "string", "maxLength": 60 },
+        "hostAvatar": { "type": "string", "maxLength": 500000 },
+        "participantsCount": { "type": "number" },
+        "isPrivate": { "type": "boolean" },
+        "activeSpeakers": { "type": "array" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "title", "hostId", "hostName"]
+    },
+    "RoomMessage": {
+      "title": "RoomMessage",
+      "description": "Live message or gift announcement in a voice room.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 60 },
+        "userAvatar": { "type": "string", "maxLength": 500000 },
+        "text": { "type": "string", "maxLength": 300 },
+        "type": { "type": "string", "enum": ["chat", "gift", "system"] },
+        "giftEmoji": { "type": "string", "maxLength": 30 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "userName", "text"]
+    },
+    "GameRound": {
+      "title": "GameRound",
+      "description": "History log of an individual game round result and coin outcome.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "gameType": { "type": "string", "maxLength": 40 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 60 },
+        "userAvatar": { "type": "string", "maxLength": 500000 },
+        "roundNumber": { "type": "number" },
+        "result": { "type": "string", "maxLength": 60 },
+        "betAmount": { "type": "number" },
+        "winAmount": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["gameType", "userId", "roundNumber", "result", "betAmount", "winAmount"]
+    },
+    "GameRanking": {
+      "title": "GameRanking",
+      "description": "Leaderboard entry for top 3 and top players in games.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 60 },
+        "userAvatar": { "type": "string", "maxLength": 500000 },
+        "gameType": { "type": "string", "maxLength": 40 },
+        "todayWon": { "type": "number" },
+        "bestWin": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId", "userName", "todayWon"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile with wallet balance and statistics."
+    },
+    "/follows/{followId}": {
+      "schema": "Follow",
+      "description": "Follow relationship documents."
+    },
+    "/rooms/{roomId}": {
+      "schema": "VoiceRoom",
+      "description": "Voice chat room information."
+    },
+    "/rooms/{roomId}/messages/{messageId}": {
+      "schema": "RoomMessage",
+      "description": "Real-time room chat and gifting feed."
+    },
+    "/gameRounds/{roundId}": {
+      "schema": "GameRound",
+      "description": "Public and user game round history."
+    },
+    "/gameRankings/{rankingId}": {
+      "schema": "GameRanking",
+      "description": "Game leaderboard entries showing top 3 and highest winners."
+    },
+    "/settings/{settingId}": {
+      "schema": "object",
+      "description": "App configuration settings including branding, game logos, and coin packages."
+    }
+  }
+}

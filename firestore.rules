@@ -1,0 +1,76 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if true;
+      allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow update: if isSignedIn() && isValidId(userId);
+      allow delete: if false;
+    }
+
+    // Follow relationships
+    match /follows/{followId} {
+      allow read: if true;
+      allow create: if isSignedIn() && isValidId(followId) && request.resource.data.followerId == request.auth.uid;
+      allow delete: if isSignedIn() && isValidId(followId) && resource.data.followerId == request.auth.uid;
+    }
+
+    // Voice rooms
+    match /rooms/{roomId} {
+      allow read: if true;
+      allow create: if isSignedIn() && isValidId(roomId);
+      allow update: if isSignedIn() && isValidId(roomId);
+      allow delete: if isSignedIn() && isValidId(roomId) && resource.data.hostId == request.auth.uid;
+
+      // Messages in voice room
+      match /messages/{messageId} {
+        allow read: if true;
+        allow create: if isSignedIn() && isValidId(messageId);
+        allow update, delete: if false;
+      }
+    }
+
+    // Game round history logs
+    match /gameRounds/{roundId} {
+      allow read: if true;
+      allow create: if isSignedIn() && isValidId(roundId);
+      allow update, delete: if false;
+    }
+
+    // Leaderboard rankings
+    match /gameRankings/{rankingId} {
+      allow read: if true;
+      allow write: if isSignedIn() && isValidId(rankingId);
+    }
+
+    // App Configuration Settings
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isSignedIn() && isValidId(settingId);
+    }
+
+    // Connection testing
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+  }
+}
