@@ -5,6 +5,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 concurrency:
@@ -29,17 +30,25 @@ jobs:
       - uses: actions/configure-pages@v5
         with:
           enablement: true
-      - name: Select Actions as the Pages source
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.repos.updateInformationAboutPagesSite({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              build_type: 'workflow'
-            });
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
+      - name: Wait for the legacy Pages build before publishing compiled assets
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Branch-based Pages can run alongside this workflow. Publish last.
+            for (let attempt = 0; attempt < 60; attempt++) {
+              const { data } = await github.rest.actions.listWorkflowRunsForRepo({
+                owner: context.repo.owner, repo: context.repo.repo,
+                head_sha: context.sha, per_page: 100
+              });
+              const legacy = data.workflow_runs.filter(run =>
+                run.name === 'pages build and deployment' && run.id !== context.runId);
+              if (legacy.length && legacy.every(run => run.status === 'completed')) break;
+              if (!legacy.length && attempt >= 3) break;
+              if (attempt === 59) throw new Error('Legacy Pages build has not finished; refusing a deployment race');
+              await new Promise(resolve => setTimeout(resolve, 5000));
+            }
       - uses: actions/deploy-pages@v4
         id: deployment
