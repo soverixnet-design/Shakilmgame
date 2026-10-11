@@ -2,43 +2,45 @@ rules_version = '2';
 service cloud.firestore {
  match /databases/{database}/documents {
   function signed() { return request.auth != null; }
-  function owner(uid) { return signed() && request.auth.uid == uid; }
-  function admin() { return signed() && request.auth.token.admin == true; }
-  match /users/{uid} {
-   allow read: if signed();
-   allow create: if owner(uid) && request.resource.data.keys().hasOnly(['uid','displayName','avatarUrl','bio','coins','totalWon','todayWon','level','followersCount','followingCount','receivedGifts','createdAt']) && request.resource.data.uid == uid && request.resource.data.coins == 0 && request.resource.data.totalWon == 0 && request.resource.data.todayWon == 0 && request.resource.data.level == 1 && request.resource.data.followersCount == 0 && request.resource.data.followingCount == 0 && request.resource.data.receivedGifts == {};
-   allow update: if owner(uid) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName','avatarUrl','bio','updatedAt']) && request.resource.data.displayName is string && request.resource.data.displayName.size() <= 80 && request.resource.data.avatarUrl is string && request.resource.data.avatarUrl.size() <= 2048;
-  }
-  match /follows/{fid} {
-   allow read: if signed();
-   allow create: if signed() && request.resource.data.keys().hasOnly(['followerId','followingId','createdAt']) && request.resource.data.followerId == request.auth.uid && request.resource.data.followingId != request.auth.uid && fid == request.auth.uid + '_' + request.resource.data.followingId;
-   allow delete: if signed() && resource.data.followerId == request.auth.uid;
-  }
-  function publicRoom(rid) { return exists(/databases/$(database)/documents/rooms/$(rid)) && get(/databases/$(database)/documents/rooms/$(rid)).data.isPrivate == false; }
+  function owner() { return signed() && request.auth.token.superAdmin == true; }
+  function member(rid) { return signed() && exists(/databases/$(database)/documents/rooms/$(rid)/members/$(request.auth.uid)) && get(/databases/$(database)/documents/rooms/$(rid)/members/$(request.auth.uid)).data.active == true && get(/databases/$(database)/documents/rooms/$(rid)/members/$(request.auth.uid)).data.banned == false; }
+  function moderator(rid) { return member(rid) && get(/databases/$(database)/documents/rooms/$(rid)/members/$(request.auth.uid)).data.role in ['host','moderator']; }
+  match /users/{uid} { allow read: if signed() && (request.auth.uid == uid || owner()); allow write: if false; }
   match /rooms/{rid} {
-   allow read: if resource.data.isPrivate == false || (signed() && resource.data.hostId == request.auth.uid);
-   allow create: if signed() && request.resource.data.hostId == request.auth.uid && request.resource.data.isPrivate == false;
-   allow update: if (signed() && resource.data.hostId == request.auth.uid) && request.resource.data.hostId == resource.data.hostId;
-   allow delete: if admin() || (signed() && resource.data.hostId == request.auth.uid);
+   allow read: if resource.data.isPrivate == false;
+   allow write: if false;
+   match /members/{uid} { allow read: if member(rid); allow write: if false; }
+   match /requests/{uid} { allow read: if member(rid) && (request.auth.uid == uid || moderator(rid)); allow write: if false; }
    match /messages/{mid} {
-    allow read: if signed() && publicRoom(rid);
-    allow create: if signed() && publicRoom(rid) && request.resource.data.userId == request.auth.uid && request.resource.data.type == 'chat' && request.resource.data.text is string && request.resource.data.text.size() <= 2000;
+    allow read: if member(rid);
+    allow create: if member(rid) && request.resource.data.keys().hasOnly(['userId','name','type','text','createdAt']) && request.resource.data.userId == request.auth.uid && request.resource.data.name == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.displayName && request.resource.data.type == 'chat' && request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 1000 && request.resource.data.createdAt == request.time;
    }
    match /signals/{sid} {
-    allow read: if signed() && publicRoom(rid) && resource.data.to == request.auth.uid;
-    allow create: if signed() && publicRoom(rid) && request.resource.data.from == request.auth.uid && request.resource.data.to is string && request.resource.data.createdAt == request.time;
+    allow read: if member(rid) && resource.data.to == request.auth.uid;
+    allow create: if member(rid) && request.resource.data.from == request.auth.uid && request.resource.data.to is string && request.resource.data.createdAt == request.time && exists(/databases/$(database)/documents/rooms/$(rid)/members/$(request.resource.data.to)) && get(/databases/$(database)/documents/rooms/$(rid)/members/$(request.resource.data.to)).data.active == true;
     allow delete: if signed() && resource.data.to == request.auth.uid;
    }
    match /presence/{uid} {
-    allow read: if signed() && publicRoom(rid);
-    allow write: if owner(uid) && publicRoom(rid);
+    allow read: if member(rid);
+    allow create, update: if member(rid) && request.auth.uid == uid && request.resource.data.keys().hasOnly(['name','avatar','updatedAt']) && request.resource.data.name is string && request.resource.data.name.size() <= 80 && request.resource.data.avatar is string && request.resource.data.avatar.size() <= 2048 && request.resource.data.updatedAt == request.time;
+    allow delete: if signed() && request.auth.uid == uid;
    }
+  }
+  match /moments/{id} {
+   allow read: if signed();
+   allow create: if signed() && request.resource.data.keys().hasOnly(['uid','name','text','image','createdAt']) && request.resource.data.uid == request.auth.uid && request.resource.data.name == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.displayName && request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 1000 && request.resource.data.image is string && request.resource.data.image.size() <= 180000 && request.resource.data.createdAt == request.time;
+   allow delete: if signed() && (resource.data.uid == request.auth.uid || owner());
+  }
+  match /directMessages/{id} {
+   allow read: if signed() && request.auth.uid in resource.data.participants;
+   allow create: if signed() && request.resource.data.keys().hasOnly(['from','to','participants','text','createdAt']) && request.resource.data.from == request.auth.uid && request.resource.data.to is string && request.resource.data.to != request.auth.uid && exists(/databases/$(database)/documents/users/$(request.resource.data.to)) && request.resource.data.participants == [request.auth.uid,request.resource.data.to] && request.resource.data.text is string && request.resource.data.text.size()>0 && request.resource.data.text.size()<=1000 && request.resource.data.createdAt == request.time;
   }
   match /giftRankings/{rid} { allow read: if true; }
   match /gameRankings/{rid} { allow read: if true; }
   match /gameRounds/{rid} { allow read: if signed() && resource.data.userId == request.auth.uid; }
-  match /settings/{sid} { allow read: if true; allow write: if admin(); }
-  match /transactions/{id} { allow read: if admin(); }
+  match /transactions/{id} { allow read: if owner() || (signed() && request.auth.uid in resource.data.participants); }
+  match /recharges/{id} { allow read: if owner() || (signed() && resource.data.uid == request.auth.uid); }
+  match /adminAudit/{id} { allow read: if owner(); }
   match /{document=**} { allow read, write: if false; }
  }
 }

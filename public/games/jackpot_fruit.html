@@ -62,7 +62,8 @@ body{background:radial-gradient(circle at 50% 20%,#4b1a7a,#12061f 75%);color:#ff
 </div>
 <div id="pop"><div id="pb"></div></div>
 <script>
-let verifiedMode=false,serverRound=null,pendingRound=null;
+let verifiedMode=parent!==window,serverRound=null,pendingRound=null;
+if(parent===window){const label=document.createElement('div');label.textContent='ডেমো • এই কয়েন অ্যাকাউন্টে যোগ হয় না';label.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:99;background:#23123d;color:#fff;text-align:center;font:12px sans-serif;padding:5px';document.body.appendChild(label);}
 function requestRound(bets){
  if(!verifiedMode)return Promise.resolve(null);
  if(pendingRound)return pendingRound.promise;
@@ -74,7 +75,7 @@ function requestRound(bets){
 addEventListener('message',e=>{
  if(e.source!==parent||e.origin!==location.origin)return;
  const d=e.data||{};
- if(d.type==='setUser'){verifiedMode=d.verified===true;document.getElementById('add')?.remove();}
+ if(d.type==='setUser'){verifiedMode=d.verified===true;document.getElementById('add')?.remove();document.querySelectorAll('input[type=file]').forEach(x=>x.disabled=true);}
  if(d.type==='roundResult'&&pendingRound?.requestId===d.requestId){
   if(d.error){const el=document.getElementById('msg')||document.getElementById('mg');if(el)el.textContent=d.error;if(d.terminal){clearInterval(pendingRound.timer);pendingRound.reject(new Error(d.error));pendingRound=null;}return;}
   clearInterval(pendingRound.timer);const resolve=pendingRound.resolve;pendingRound=null;resolve(d.result);
@@ -84,7 +85,7 @@ addEventListener('message',e=>{
 let lp=0;setTimeout(()=>lbar.style.width='10%',50);const lh=setInterval(()=>{lp++;lbar.style.width=(lp+1)*10+'%';if(lp>=10){clearInterval(lh);load.remove();phase='bet';t=20;ui()}},1000);
 const $=s=>document.querySelector(s),fmt=n=>n>=1e6?+(n/1e6).toFixed(2)+'M':n>=1e3?+(n/1e3).toFixed(0)+'K':n;
 const F=[['🍋',5],['🍇',5],['🥝',5],['🍒',40],0,['🍑',5],['🍉',20],['🍌',10],['🍓',10]],RING=[0,1,2,5,8,7,6,3],CH=[10000,100000,500000,1000000];
-let bal=1000000;
+let bal=parent===window?1000000:0;
 let ss0=617,chip=CH[0],bets=Array(9).fill(0),last=null,hist=[],t=20,phase='load',rd=1500,td=0,jp=21817399,auto=0,on=1,av='',nm='আপনি',ac;
 function snd(f,d){if(!on)return;try{ac=ac||new AudioContext();const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=f;g.gain.value=.07;o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+d)}catch(e){}}
 const tiles=F.map((f,i)=>{const d=document.createElement('button');d.className='t'+(i>2&&i!=5&&i<6||i>5?' p':'');if(f){d.innerHTML=`<b>${f[0]}</b><i>${f[1]} times</i><u></u>`;d.onclick=()=>bet(i)}else{d.id='tm';d.className='';d.disabled=true}$('#g').appendChild(d);return d});
@@ -105,7 +106,7 @@ if(b=='+1'||b=='+2')rl[b=='+1'?0:1].classList.add('h');if(b=='x2'||b=='x3'){rl[2
 function fin(res,b,cost){const rs=serverRound?serverRound.results:[res];if(!serverRound&&b=='+1')rs.push(pick());if(!serverRound&&b=='+2'){rs.push(pick(),pick())}
 const mu=b=='x2'?2:b=='x3'?3:1;let g=Math.floor(rs.reduce((s,r)=>s+bets[r]*F[r][1],0)*mu),jb=0;
 if(b=='JP'&&cost>=1000){const pc=cost>=1e6?.7:cost>=1e5?.5:cost>=1e4?.3:.1;jb=Math.floor(jp*pc);jp-=jb;g+=jb}
-if(serverRound){g=serverRound.win;bal=serverRound.balance;jp=serverRound.pool;serverRound=null}else{bal+=g}td+=g;rd++;rs.forEach(r=>hist.unshift(RING.indexOf(r)>=0?r:0));hist=hist.slice(0,8);if(g>0){snd(880,.4);rain()}
+if(serverRound){g=serverRound.win;bal=serverRound.balance;jp=serverRound.pool;serverRound=null}else{bal+=g}parent.postMessage({type:'roundComplete'},location.origin);td+=g;rd++;rs.forEach(r=>hist.unshift(RING.indexOf(r)>=0?r:0));hist=hist.slice(0,8);if(g>0){snd(880,.4);rain()}
 $('#pb').innerHTML=`<h3>Round ${rd-1}'s Result</h3><div style="font-size:42px">${rs.map(r=>F[r][0]).join(' ')}</div>${b?`<p style="text-align:center;color:#ffd84a">🎁 বোনাস: ${b=='JP'?'JACKPOT':b}</p>`:''}<div class="rw"><span>This Round Earnings:</span><span>🪙 ${g.toLocaleString()}</span></div><div class="rw"><span>This Round Cost:</span><span>🪙 ${cost.toLocaleString()}</span></div><h3>This Round Ranking</h3><div class="av">${av?`<img src="${av}">`:'👤'}</div><div>${nm}</div><div class="rw" style="justify-content:center">🪙 ${g.toLocaleString()}</div><small id="cd">(4s)</small>`;$('#pop').style.display='flex';
 let c=4;const ch=setInterval(()=>{c--;$('#cd')&&($('#cd').textContent=`(${c}s)`);if(c<=0){clearInterval(ch);$('#pop').style.display='none';bets=Array(9).fill(0);tiles.forEach(d=>d.classList.remove('hl'));$('#rl div:nth-child(3)').textContent='x2';document.querySelectorAll('#rl div').forEach(d=>d.classList.remove('h'));phase='bet';t=20;if(auto)rebet();ui()}},1000);ui()}
 function rain(){for(let i=0;i<24;i++){const c=document.createElement('i');c.className='cr';c.textContent='🪙';c.style.left=Math.random()*95+'vw';c.style.animationDelay=Math.random()*.8+'s';document.body.appendChild(c);setTimeout(()=>c.remove(),3000)}}
@@ -114,7 +115,7 @@ setInterval(()=>{ss0=ss0>0?ss0-1:617;$('#ss').textContent=Math.floor(ss0/60)+':'
 $('#au').onclick=()=>{auto=!auto;$('#au').classList.toggle('on',!!auto);$('#au').textContent=auto?'Auto ✓':'Auto';if(auto&&phase=='bet'&&!bets.some(x=>x)){rebet();ui()}};
 $('#pw').onclick=()=>{try{parent.postMessage({type:'exit'},location.origin)}catch(e){}};$('#sn').onclick=()=>{on=!on;$('#sn').textContent=on?'🔊':'🔇'};
 $('#ru').onclick=()=>{$('#pb').innerHTML=`<h3>নিয়ম</h3><p>১. চিপ বেছে নিয়ে ফলের ঘরে ট্যাপ করে বেট ধরুন। ২০ সেকেন্ড পর ফল ঠিক হবে।</p><p>২. যে ফল আসবে তাতে বেট ধরা থাকলে বেট × গুণক কয়েন পাবেন।</p><p>৩. স্লট বোনাস: Fruit +1 / +2 (অতিরিক্ত ফল), Bonus x2 / x3 (জয় দ্বিগুণ/তিনগুণ), অথবা Jackpot। বোনাস নাও আসতে পারে।</p><p>৪. জ্যাকপট পুল প্রতি বেটে বাড়ে। Jackpot এলে ওই রাউন্ডের খরচ অনুযায়ী পুলের ১০% (১,০০০–৯,৯৯৯), ৩০% (১০,০০০–৯৯,৯৯৯), ৫০% (১ লক্ষ–৯,৯৯,৯৯৯) বা ৭০% (১০ লক্ষ+) পাবেন।</p><p>এটি ডেমো কয়েনের গেম।</p><button class="ib" style="width:100%" onclick="$('#pop').style.display='none'">ঠিক আছে</button>`;$('#pop').style.display='flex'};
-addEventListener('message',e=>{if(e.origin!==location.origin||e.source!==parent)return;const d=e.data||{};if(d.type=='setBalance'){bal=+d.balance;ui()}if(d.type=='setUser'){if(d.name)nm=String(d.name).replace(/[<>&"']/g,'');if(d.avatar&&/^https:\/\//.test(d.avatar))av=encodeURI(d.avatar).replace(/["']/g,'')}});ui();
+addEventListener('message',e=>{if(e.origin!==location.origin||e.source!==parent)return;const d=e.data||{};if(d.type=='setBalance'){bal=+d.balance;ui()}if(d.type=='setUser'){if(d.name)nm=String(d.name).replace(/[<>&"']/g,'');if(d.avatar&&/^(https:\/\/|data:image\/(jpeg|png|webp);base64,)/.test(d.avatar))av=encodeURI(d.avatar).replace(/["']/g,'')}});ui();
 </script><style>.sc{perspective:700px;height:170px;display:flex;align-items:center;justify-content:center;position:relative;margin-top:10px}
 .sc::after{content:"";position:absolute;bottom:4px;width:110px;height:18px;border-radius:50%;background:radial-gradient(#000c,transparent 70%);animation:sd 3s ease-in-out infinite}
 .cube{width:90px;height:90px;position:relative;transform-style:preserve-3d;animation:cb 7s linear infinite,fl 3s ease-in-out infinite}
@@ -139,7 +140,7 @@ const fm=n=>n.toLocaleString(),cl='<button class="cl" onclick="document.getEleme
 function open(h){$('#xp').innerHTML=h;m.style.display='flex'}
 $('#xh').onclick=()=>open('<h3>📜 আমার হিস্ট্রি</h3>'+(H.length?'<div class="hr h"><span>রাউন্ড</span><span>ফল</span><span>খরচ</span><span>জয়</span></div>'+H.map(x=>`<div class="hr"><span>${x.r}</span><b>${x.e}</b><span>${fm(x.c)}</span><span class="${x.w>x.c?'up':x.w>0?'':'dn'}">${x.w>0?'+'+fm(x.w):'0'}</span></div>`).join(''):'<p style="text-align:center;padding:20px">এখনও কোনো রাউন্ড খেলা হয়নি</p>')+cl);
 $('#xk').onclick=()=>{const L=RK||[{name:nm,avatar:av,amount:td0()}];open('<h3>🏆 আজকের র‍্যাঙ্কিং</h3>'+L.slice(0,10).map((p,i)=>`<div class="rk"><div class="n">${['🥇','🥈','🥉'][i]||i+1}</div><div class="a">${p.avatar?`<img src="${p.avatar}">`:'👤'}</div><div>${p.name}</div><div>🪙 ${fm(p.amount)}</div></div>`).join('')+`<p style="text-align:center;margin-top:8px">⭐ আপনার সেরা একক জয়: 🪙 ${fm(best)}</p>`+(RK?'':'<p style="text-align:center;font-size:12px;opacity:.8;margin-top:6px">সবার র‍্যাঙ্কিং দেখাতে সার্ভার যুক্ত করতে হবে।</p>')+cl)};
-addEventListener('message',e=>{if(e.origin!==location.origin||e.source!==parent)return;const d=e.data||{};if(d.type=='setRanking'&&Array.isArray(d.list))RK=d.list})})()</script><style>.cube i{backface-visibility:hidden;background:linear-gradient(135deg,#ffe066,#ff7a00)!important}@media(max-height:800px){#wheel{width:min(80vw,340px)!important}#jt{font-size:clamp(34px,11vw,46px)!important}.t{aspect-ratio:1.5!important}.t b{font-size:30px!important}#rl div{height:44px!important}#rw{margin:4px auto!important}#bd{padding:7px!important}#g{padding:6px!important;gap:6px!important}#ch{margin:8px 0 2px!important}#m{padding-bottom:8px!important}.xr{margin:4px 0!important}}</style><style>
+addEventListener('message',e=>{if(e.source!==parent||e.origin!==location.origin)return;const d=e.data||{};if(d.type=='setRanking'&&Array.isArray(d.list))RK=d.list.map(p=>({name:String(p.name||'').replace(/[<>&"']/g,''),avatar:typeof p.avatar==='string'&&/^https:\/\//.test(p.avatar)?encodeURI(p.avatar).replace(/["']/g,''):'',amount:Math.max(0,Number(p.amount)||0)}))})})()</script><style>.cube i{backface-visibility:hidden;background:linear-gradient(135deg,#ffe066,#ff7a00)!important}@media(max-height:800px){#wheel{width:min(80vw,340px)!important}#jt{font-size:clamp(34px,11vw,46px)!important}.t{aspect-ratio:1.5!important}.t b{font-size:30px!important}#rl div{height:44px!important}#rw{margin:4px auto!important}#bd{padding:7px!important}#g{padding:6px!important;gap:6px!important}#ch{margin:8px 0 2px!important}#m{padding-bottom:8px!important}.xr{margin:4px 0!important}}</style><style>
 .enter>:not(canvas):not(#load){animation:en .8s cubic-bezier(.2,1.3,.3,1) both}@keyframes en{from{opacity:0;transform:scale(.8) translateY(40px)}}
 .it b,.t b{animation:bob 2.6s ease-in-out infinite}.it:nth-child(even) b,.t:nth-child(even) b{animation-delay:-1.3s}@keyframes bob{50%{transform:translateY(-6px) translateZ(30px)}}
 .urg{animation:urg .5s ease-in-out infinite;color:#ff4a4a!important}@keyframes urg{50%{transform:scale(1.25)}}
